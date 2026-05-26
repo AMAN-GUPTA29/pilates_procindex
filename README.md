@@ -41,7 +41,8 @@ solstice-pilates-agent/
 3. Add credentials/google-service-account.json
 4. Copy `.env.example` to `.env` and fill in values
 5. Run `npm run dev`
-
+6. In a separate terminal, run `ngrok http 3000`
+7. Copy the ngrok forwarding URL and set it as the Custom LLM URL in Vapi dashboard
 ---
 
 ## Environment Variables
