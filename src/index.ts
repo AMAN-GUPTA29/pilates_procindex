@@ -1,16 +1,16 @@
 import express from "express";
 import * as dotenv from "dotenv";
-import { runAgent, Message } from "./agent/agent";
+import Anthropic from "@anthropic-ai/sdk";
+import { runAgent, runAgentStream } from "./agent/agent";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// Store conversation history per session (in memory for demo)
-const sessions: Record<string, Message[]> = {};
+const sessions: Record<string, Anthropic.MessageParam[]> = {};
+const vapiSessions: Record<string, Anthropic.MessageParam[]> = {};
 
-// --- Basic Chat UI ---
 app.get("/", (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -199,7 +199,6 @@ app.get("/", (req, res) => {
   `);
 });
 
-// --- Chat API Endpoint ---
 app.post("/chat", async (req, res) => {
   const { sessionId, message } = req.body;
 
@@ -207,28 +206,114 @@ app.post("/chat", async (req, res) => {
     return res.status(400).json({ error: "sessionId and message required" });
   }
 
-  // Initialize session if new
   if (!sessions[sessionId]) {
     sessions[sessionId] = [];
   }
 
-  // Add user message to history
   sessions[sessionId].push({ role: "user", content: message });
 
   try {
-    const response = await runAgent(sessions[sessionId]);
+    const { text, messages } = await runAgent(sessions[sessionId]);
+    sessions[sessionId] = messages;
 
-    // Add agent response to history
-    sessions[sessionId].push({ role: "assistant", content: response });
-
-    res.json({ response });
+    res.json({ response: text });
   } catch (error: any) {
     console.error("Agent error:", error.message);
     res.status(500).json({ error: "Agent failed", details: error.message });
   }
 });
 
-// --- Start Server ---
+
+app.post("/chat/completions", async (req, res) => {
+  console.log("[/chat/completions] Hit!");
+
+  const { messages: incomingMessages, call } = req.body;
+  const callId: string | undefined = call?.id;
+
+  const userMsgs = (incomingMessages || []).filter((m: any) => m.role === "user");
+  const latestUserContent: string =
+    typeof userMsgs[userMsgs.length - 1]?.content === "string"
+      ? userMsgs[userMsgs.length - 1].content
+      : "";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendChunk = (content: string, finish: boolean = false) => {
+    const payload = JSON.stringify({
+      id: "chatcmpl-" + Date.now(),
+      object: "chat.completion.chunk",
+      created: Date.now(),
+      model: "claude-haiku-4-5",
+      choices: [{
+        index: 0,
+        delta: finish ? {} : { role: "assistant", content },
+        finish_reason: finish ? "stop" : null,
+      }],
+    });
+    res.write(`data: ${payload}\n\n`);
+  };
+
+  if (!latestUserContent.trim()) {
+    console.log("[/chat/completions] Empty — skipping agent");
+    sendChunk("", true);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
+  console.log("[/chat/completions] User said:", latestUserContent);
+
+  // Build session
+  let sessionMessages: Anthropic.MessageParam[];
+  if (callId && vapiSessions[callId]) {
+    sessionMessages = [...vapiSessions[callId], { role: "user", content: latestUserContent }];
+  } else if (callId) {
+    sessionMessages = [{ role: "user", content: latestUserContent }];
+  } else {
+    sessionMessages = (incomingMessages || [])
+      .filter((m: any) => m.role === "user" || m.role === "assistant")
+      .map((m: any) => ({
+        role: m.role as "user" | "assistant",
+        content: typeof m.content === "string" ? m.content : "",
+      }));
+  }
+
+  try {
+    const { messages: updatedMessages } = await runAgentStream(
+      sessionMessages,
+      (chunk) => sendChunk(chunk)  // ← chunks flow directly to Vapi as they're produced
+    );
+
+    if (callId) {
+      vapiSessions[callId] = updatedMessages;
+    }
+
+    sendChunk("", true);
+    res.write("data: [DONE]\n\n");
+    res.end();
+
+  } catch (error: any) {
+    console.error("[Vapi] Error:", error.message);
+    sendChunk("Sorry about that, let me try again.");
+    sendChunk("", true);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }
+});
+
+app.post("/vapi", async (req, res) => {
+//   console.log("[Vapi /vapi] Body:", JSON.stringify(req.body, null, 2));
+  res.json({ received: true });
+});
+
+
+app.use((req, res, next) => {
+  console.log(`[INCOMING] ${req.method} ${req.path}`);
+  next();
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`\n🌿 Solstice Pilates AI Receptionist running`);

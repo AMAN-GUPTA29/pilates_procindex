@@ -11,8 +11,11 @@ const auth = new google.auth.GoogleAuth({
 const calendarClient = google.calendar({ version: "v3", auth });
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID!;
 
-// --- Helpers ---
-
+/**
+ * Parses the description of a calendar event to extract class information.
+ * @param description The description of the calendar event.
+ * @returns An object containing the parsed class information.
+ */
 function parseDescription(description: string) {
   const lines = description || "";
   const capacityMatch = lines.match(/capacity:(\d+)/);
@@ -26,6 +29,13 @@ function parseDescription(description: string) {
   };
 }
 
+/**
+ * Builds the description string for a calendar event based on its class information.
+ * @param capacity The maximum capacity of the class.
+ * @param booked The number of spots already booked.
+ * @param attendees A list of attendees for the class.
+ * @returns The formatted description string.
+ */
 function buildDescription(
   capacity: number,
   booked: number,
@@ -34,6 +44,14 @@ function buildDescription(
   return `capacity:${capacity}\nbooked:${booked}\nattendees:${attendees}`;
 }
 
+/**
+ * Checks if a calendar event matches the specified class type, date, and time.
+ * @param event The calendar event to check.
+ * @param class_type The type of class to match.
+ * @param date The date of the class to match.
+ * @param time The time of the class to match.
+ * @returns A boolean indicating whether the event matches the criteria.
+ */
 function matchesClass(
   event: any,
   class_type: string,
@@ -59,8 +77,10 @@ function matchesClass(
   return classMatch && localDate === date && localTime === time;
 }
 
-// --- Exported Functions ---
-
+/**
+ * Retrieves all upcoming classes from the calendar.
+ * @returns 
+ */
 export async function getAllClasses() {
   const response = await calendarClient.events.list({
     calendarId: CALENDAR_ID,
@@ -106,6 +126,13 @@ export async function getAllClasses() {
   });
 }
 
+/**
+ * Checks the availability of a specific class at a given date and time.
+ * @param class_type The type of class to check.
+ * @param date The date of the class to check.
+ * @param time The time of the class to check.
+ * @returns A promise resolving to an object indicating the availability and details of the class.
+ */
 export async function checkAvailability(
   class_type: string,
   date: string,
@@ -145,6 +172,16 @@ export async function checkAvailability(
   };
 }
 
+/**
+ * Books a spot in a class for a caller.
+ * @param class_type The type of class to book.
+ * @param date The date of the class to book.
+ * @param time The time of the class to book.
+ * @param caller_name The name of the caller.
+ * @param caller_phone The phone number of the caller.
+ * @param spots The number of spots to book.
+ * @returns A promise resolving to an object indicating the success or failure of the booking.
+ */
 export async function bookClass(
   class_type: string,
   date: string,
@@ -210,6 +247,14 @@ export async function bookClass(
   };
 }
 
+/**
+ * Cancels an existing booking for a caller.
+ * @param class_type The type of class to cancel.
+ * @param date The date of the class to cancel.
+ * @param time The time of the class to cancel.
+ * @param caller_phone The phone number of the caller to identify their booking.
+ * @returns A promise resolving to an object indicating the success or failure of the cancellation.
+ */
 export async function cancelBooking(
   class_type: string,
   date: string,
@@ -260,6 +305,19 @@ export async function cancelBooking(
   };
 }
 
+/**
+ * Reschedules an existing booking for a caller.
+ * @param old_class_type The type of the old class.
+ * @param old_date The date of the old class.
+ * @param old_time The time of the old class.
+ * @param new_class_type The type of the new class.
+ * @param new_date The date of the new class.
+ * @param new_time The time of the new class.
+ * @param caller_name The name of the caller.
+ * @param caller_phone The phone number of the caller.
+ * @param spots The number of spots to reschedule.
+ * @returns A promise resolving to an object indicating the success or failure of the rescheduling.
+ */
 export async function rescheduleBooking(
   old_class_type: string,
   old_date: string,
@@ -315,5 +373,80 @@ export async function rescheduleBooking(
   return {
     success: true,
     message: `Rescheduled from ${old_class_type} on ${old_date} at ${old_time} to ${new_class_type} on ${new_date} at ${new_time}.`,
+  };
+}
+
+
+/**
+ * Adds additional spots to an existing booking for a caller.
+ * @param class_type The type of class to add spots to.
+ * @param date The date of the class to add spots to.
+ * @param time The time of the class to add spots to.
+ * @param caller_phone The phone number of the caller to identify their booking.
+ * @param caller_name The name of the caller.
+ * @param additional_spots The number of additional spots to add.
+ * @returns A promise resolving to an object indicating the success or failure of the operation.
+ */
+export async function addSpotsToBooking(
+  class_type: string,
+  date: string,
+  time: string,
+  caller_phone: string,
+  caller_name: string,
+  additional_spots: number
+) {
+  const availability = await checkAvailability(class_type, date, time);
+
+  if (!availability.found) {
+    return { success: false, message: "Class not found." };
+  }
+
+  // Check if caller is actually booked
+  const attendeesList = availability.attendees || "";
+  const attendees = attendeesList.split(",").map((a) => a.trim());
+  const existingEntry = attendees.find((a) => a.includes(caller_phone));
+
+  if (!existingEntry) {
+    return {
+      success: false,
+      message: "No existing booking found for that phone number.",
+    };
+  }
+
+  // Check if enough spots available
+  if (availability.spotsLeft! < additional_spots) {
+    return {
+      success: false,
+      message: `Only ${availability.spotsLeft} spot(s) left, cannot add ${additional_spots} more.`,
+    };
+  }
+
+  // Get current spot count from xN
+  const spotsMatch = existingEntry.match(/x(\d+)/);
+  const currentSpots = spotsMatch ? parseInt(spotsMatch[1]) : 1;
+  const newSpots = currentSpots + additional_spots;
+
+  // Update attendee entry
+  const updatedEntry = existingEntry.replace(/x\d+/, `x${newSpots}`);
+  const newAttendees = attendees
+    .map((a) => (a.includes(caller_phone) ? updatedEntry : a))
+    .join(", ");
+
+  const newBooked = availability.booked! + additional_spots;
+  const newDescription = buildDescription(
+    availability.capacity!,
+    newBooked,
+    newAttendees
+  );
+
+  await calendarClient.events.patch({
+    calendarId: CALENDAR_ID,
+    eventId: availability.id!,
+    requestBody: { description: newDescription },
+  });
+
+  return {
+    success: true,
+    message: `Added ${additional_spots} spot(s) to ${caller_name}'s booking. Now has ${newSpots} spot(s) total.`,
   };
 }

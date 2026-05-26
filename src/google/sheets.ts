@@ -12,8 +12,10 @@ const sheetsClient = google.sheets({ version: "v4", auth });
 const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
 const SHEET_TAB = "Contacts";
 
-// --- Helpers ---
-
+/**
+ * Gets the current date and time in the specified timezone.
+ * @returns The current date and time as a string.
+ */
 function now() {
   return new Date().toLocaleString("en-US", {
     timeZone: "Asia/Kolkata",
@@ -25,14 +27,22 @@ function now() {
   });
 }
 
+/**
+ * Gets the current date in the specified timezone.
+ * @returns The current date as a string.
+ */
 function today() {
   return new Date().toLocaleDateString("en-CA", {
     timeZone: "Asia/Kolkata",
   });
 }
 
-// --- Exported Functions ---
 
+/**
+ * Looks up a caller by their phone number.
+ * @param phone The phone number of the caller to look up.
+ * @returns A promise resolving to the caller's information or null if not found.
+ */
 export async function lookupCaller(phone: string) {
   const response = await sheetsClient.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -59,6 +69,16 @@ export async function lookupCaller(phone: string) {
   };
 }
 
+/**
+ * Logs a contact interaction in the spreadsheet.
+ * @param caller_phone The phone number of the caller.
+ * @param caller_name The name of the caller.
+ * @param request_type The type of request.
+ * @param details Details about the request.
+ * @param status The status of the request.
+ * @param notes Additional notes about the request.
+ * @returns A promise resolving to an object indicating the success or failure of the operation.
+ */
 export async function logContact(
   caller_phone: string,
   caller_name: string,

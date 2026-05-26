@@ -32,7 +32,6 @@
 **Why:** OAuth requires a browser-based login flow to get a refresh token — adds setup friction for a demo and needs token refresh handling in code. Service Account uses a JSON key file, no login flow, works headlessly. Perfect for a server-side agent that runs without user interaction. Would use OAuth if this were a multi-user product where each user owns their own calendar.
 
 - **Calendar name:** Solstice Pilates Classes
-- **Calendar ID:** `8c7432dc1a7fba62a77795aea25db1aaeb104902df02dfd7b4f4e1d1c8c40753@group.calendar.google.com`
 - **Sheet name:** Solstice Pilates - Contacts
 - **Sheet tab:** Contacts
 - **Sheet columns:** Phone | Name | First_Called | Last_Called | Call_Timestamp | Request_Type | Details | Status | Notes
@@ -49,6 +48,12 @@
 capacity:8
 booked:6
 attendees:Name Phone xN, Name Phone xN
+```
+
+**Format for Spreadsheet:**
+```
+Phone          | Name | First_Called | Last_Called | Call_Timestamp      | Request_Type | Details  | Status    | Notes
+917-555-0144   | Tom  | 2026-05-26   | 2026-05-26  | 05/26/2026 01:30 PM | Booking      | Booked Reformer class on 2026-05-28 at 19:00, 1 spot | Booked    |
 ```
 
 ### Attendee format — Name Phone xN
@@ -93,21 +98,69 @@ Running Late | Drop-in Inquiry | General Question | Complaint | Other
 ```
 
 ---
-
+ 
 ## 6. Latency Strategy (Phase 2 — Vapi)
-
--
-
+ 
+### SSE Streaming over JSON response
+**Why:** Sending the full response as JSON means Vapi waits for the entire response before speaking. SSE streams word by word — Vapi starts speaking as soon as first words arrive, reducing perceived latency by 300-500ms.
+ 
+### Filler injection in code
+**Why:** Vapi's built-in backchanneling wasn't available on free plan dashboard. Instead we send "One moment..." immediately via SSE before tool calls run. Only injected when message contains booking/availability keywords — not for simple conversational replies.
+ 
+### Session tracking by Vapi call ID
+**Why:** Vapi sends full message history on every turn which caused the agent to re-process old tool calls and attempt duplicate bookings. Tracking sessions by `call.id` means we only append the latest user message to our own maintained history — no duplicate actions.
+ 
+### res.flushHeaders() immediately
+**Why:** Sends SSE headers to Vapi before any processing begins. Keeps the connection alive during tool calls (Google API calls take 200-400ms each) so Vapi doesn't timeout.
+ 
 ---
-
+ 
 ## 7. Voice Tuning (Phase 2 — Vapi)
-
--
-
+ 
+### Transcriber — Deepgram Nova-3
+**Why:** Nova-3 handles numbers and names significantly better than flux-general which was mishearing "6pm Reformer" as "sixth period former" and "Thursday" as "thirteenth amendment".
+ 
+### Voice — Emma (Vapi)
+**Why:** Warm, natural sounding voice suitable for a boutique pilates studio receptionist.
+ 
+### Start Speaking Plan
+- Wait seconds: 0.0 — agent speaks as fast as possible
+- Smart Endpointing: On — more accurate speech detection
+- On No Punctuation Seconds: 0.8 — reduced from 1.5 for faster response
+### Stop Speaking Plan
+- Number of words: 2 — caller can interrupt after 2 words
+- Voice seconds: 0.2
+- Back off seconds: 1
+### End Call Phrases
+**Why short phrases removed:** "goodbye", "no thanks", "that's all" were triggering mid-conversation. Kept only explicit multi-word phrases.
+```
+have a great day, thanks for calling solstice, goodbye and take care
+```
+ 
+### Silence Timeout
+- Set to 30 seconds (reduced from 60) — ends call faster after genuine silence
 ---
-
-## 8. Open Questions
-
-- [ ] Which specific turns should use Sonnet vs Haiku before submission?
-- [ ] Vapi voice — which TTS voice fits the studio's tone?
-- [ ] Should agent confirm booking via a summary before finalizing?
+ 
+## 8. Auto-Logging Strategy
+ 
+### Logging guaranteed in code, not relying on Claude
+**Why:** Claude occasionally forgot to call log_contact despite system prompt instructions. Moving auto-logging into the tool executor guarantees it always happens after successful actions.
+- `book_class` success → auto `logContact`
+- `cancel_booking` success → auto `logContact`
+- `reschedule_booking` success → auto `logContact`
+- `add_spots_to_booking` success → auto `logContact`
+- Running late, general questions, handoffs → Claude calls `log_contact` via tool
+---
+ 
+## 9. Duplicate Booking Prevention
+ 
+### Phone number check before booking
+**Why:** Without this check the agent would double-book callers who called multiple times or misheard confirmation. `bookClass()` now checks if phone number already exists in attendees before adding.
+ 
+### Session history prevents re-booking
+**Why:** Vapi sends full conversation history on every turn. Without session tracking, the agent would re-process booking tool calls on every subsequent message. Fixed by maintaining our own session keyed by `call.id` and only appending new user messages.
+ 
+### buildSystemPrompt context injection
+**Why:** After a booking is confirmed, subsequent messages get an additional system prompt note: "The previous action is COMPLETE. Do NOT repeat." Prevents Claude from re-booking when caller says "no thanks" or "goodbye".
+ 
+---

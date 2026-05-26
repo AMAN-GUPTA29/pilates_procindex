@@ -1,5 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+
+/**
+ * Definition of tools available to the agent. Each tool has a name, description, and an input schema that defines what parameters it expects.
+ * The agent will use this information to decide when and how to call these tools based on the conversation with the caller. 
+ * The tools include checking class availability, booking classes, logging contacts, and more. This structured definition allows 
+ * the agent to interact with these tools in a consistent way.
+ */
 export const tools: Anthropic.Tool[] = [
   {
     name: "check_availability",
@@ -236,6 +243,40 @@ export const tools: Anthropic.Tool[] = [
         },
       },
       required: ["reason"],
+    },
+  },
+  {
+    name: "add_spots_to_booking",
+    description:
+      "Add more spots to an existing booking for a caller who is already booked in a class. Use when caller says they want to bring a friend, add a guest, or increase their spot count.",
+    input_schema: {
+      type: "object",
+      properties: {
+        class_type: {
+          type: "string",
+          enum: ["Reformer", "Mat"],
+        },
+        date: {
+          type: "string",
+          description: "Date in YYYY-MM-DD format",
+        },
+        time: {
+          type: "string",
+          description: "Start time in HH:MM 24hr format",
+        },
+        caller_phone: {
+          type: "string",
+          description: "Phone number to find existing booking",
+        },
+        caller_name: {
+          type: "string",
+        },
+        additional_spots: {
+          type: "number",
+          description: "Number of additional spots to add",
+        },
+      },
+      required: ["class_type", "date", "time", "caller_phone", "caller_name", "additional_spots"],
     },
   },
 ];

@@ -11,7 +11,7 @@ An AI receptionist for Solstice Pilates studio. Handles bookings, reschedules, c
 
 ---
 
-## Project Structure
+## Project Structure    
 ```
 solstice-pilates-agent/
 ├── credentials/
@@ -51,6 +51,7 @@ GOOGLE_CALENDAR_ID=
 GOOGLE_SHEET_ID=
 GOOGLE_SERVICE_ACCOUNT_PATH=credentials/google-service-account.json
 PORT=3000
+VAPI_API_KEY=
 ```
 
 ---
